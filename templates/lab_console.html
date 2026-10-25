@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>محطة المختبر والفرز الذكي (Lab Console)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>body { font-family: 'Tajawal', sans-serif; }</style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen p-6">
+    <div class="max-w-7xl mx-auto space-y-6">
+        <div class="flex justify-between items-center bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-xl">
+            <div>
+                <h1 class="text-2xl font-bold text-teal-400">محطة الفحص المخبري (Lab Bench Console)</h1>
+                <p class="text-sm text-slate-400 mt-1">إدخال النتائج والحساب التلقائي لمؤشرات Mentzer, FIB-4, eGFR وإصدار Reflex</p>
+            </div>
+            <div class="flex gap-3">
+                <a href="/" class="px-4 py-2 bg-slate-700 text-slate-200 rounded-xl text-sm font-bold hover:bg-slate-600">الاستقبال</a>
+                <a href="/batch-upload" class="px-4 py-2 bg-slate-700 text-slate-200 rounded-xl text-sm font-bold hover:bg-slate-600">استيراد وتحليل الملفات</a>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Submit Test Form -->
+            <div class="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-xl space-y-4">
+                <h2 class="text-lg font-bold text-teal-300 border-b border-slate-700 pb-2">إدخال نتائج التحليل المخبري</h2>
+                <form action="/submit-lab-test" method="POST" class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-400 mb-1">اختر الطلب المعلق (Pending Order)</label>
+                        <select name="order_id" required class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white">
+                            {% for ord in pending_orders %}
+                            <option value="{{ ord.id }}">{{ ord.order_code }} — {{ ord.patient.name if ord.patient else 'مريض' }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-400 mb-1">نوع اللوحة (Panel)</label>
+                        <select name="panel" id="panelSelect" onchange="updateInputs()" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white">
+                            <option value="CBC">صورة الدم الكاملة (CBC)</option>
+                            <option value="Liver">وظائف الكبد (Liver)</option>
+                            <option value="Renal">وظائف الكلى (Renal)</option>
+                            <option value="Metabolic">الأيض والسكري (Metabolic)</option>
+                            <option value="Thyroid">الغدة الدرقية (Thyroid)</option>
+                        </select>
+                    </div>
+
+                    <div id="inputGroup" class="space-y-3">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-400 mb-1" id="lbl1">الهيموجلوبين Hgb (g/dL)</label>
+                            <input type="number" step="0.1" name="val1" value="11.2" required class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-400 mb-1" id="lbl2">كريات الدم الحمراء RBC (10^12/L)</label>
+                            <input type="number" step="0.1" name="val2" value="4.8" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-400 mb-1" id="lbl3">حجم الكريات MCV (fL)</label>
+                            <input type="number" step="0.1" name="val3" value="72.0" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white">
+                        </div>
+                    </div>
+
+                    <button type="submit" class="w-full py-3 bg-teal-500 text-slate-950 font-bold rounded-xl text-sm shadow hover:bg-teal-400 transition">تطبيق المحرك السريري وحفظ النتيجة</button>
+                </form>
+            </div>
+
+            <!-- Recent Evaluated Results -->
+            <div class="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-xl space-y-4">
+                <h2 class="text-lg font-bold text-teal-300 border-b border-slate-700 pb-2">آخر النتائج والفرز الذكي</h2>
+                <div class="space-y-3 max-h-[450px] overflow-y-auto">
+                    {% for res in results %}
+                    <div class="p-3 bg-slate-900 rounded-xl border border-slate-700 text-xs space-y-1">
+                        <div class="flex justify-between font-bold text-teal-400">
+                            <span>وصل: {{ res.order.order_code if res.order else 'N/A' }}</span>
+                            <span>{{ res.panel_type }}</span>
+                        </div>
+                        <div>التقييم: <span class="text-white font-bold">{{ res.clinical_flag }}</span></div>
+                        <div>فحص Reflex: <span class="text-amber-300 font-bold">{{ res.reflex_order }}</span></div>
+                        <div class="text-slate-400">توجيه العينة: {{ res.tube_alert }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function updateInputs() {
+            const p = document.getElementById('panelSelect').value;
+            const l1 = document.getElementById('lbl1');
+            const l2 = document.getElementById('lbl2');
+            const l3 = document.getElementById('lbl3');
+            if(p === 'CBC') {
+                l1.innerText = 'الهيموجلوبين Hgb (g/dL)';
+                l2.innerText = 'كريات الدم الحمراء RBC';
+                l3.innerText = 'حجم الكريات MCV (fL)';
+            } else if(p === 'Liver') {
+                l1.innerText = 'أنزيم AST (U/L)';
+                l2.innerText = 'أنزيم ALT (U/L)';
+                l3.innerText = 'غير محتسب';
+            } else if(p === 'Renal') {
+                l1.innerText = 'الكرياتينين Creatinine (mg/dL)';
+                l2.innerText = 'غير محتسب';
+                l3.innerText = 'غير محتسب';
+            } else if(p === 'Metabolic') {
+                l1.innerText = 'سكر الصيام Glucose (mg/dL)';
+                l2.innerText = 'الأنسولين Insulin (可选)';
+                l3.innerText = 'غير محتسب';
+            } else if(p === 'Thyroid') {
+                l1.innerText = 'هرمون TSH (mIU/L)';
+                l2.innerText = 'غير محتسب';
+                l3.innerText = 'غير محتسب';
+            }
+        }
+    </script>
+</body>
+</html>
