@@ -1,8 +1,8 @@
 # server.py
 import os
 import io
-import csv
 import urllib.parse
+import pandas as pd
 import uvicorn
 from typing import List
 from fastapi import FastAPI, Request, Form, UploadFile, File, Depends, status
@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from database import SessionLocal, Patient, LabOrder, ClinicalResult
 from clinical_engine import MasterClinicalEngine
 
-app = FastAPI(title="BioReflex Pro - Local LIMS & Command Center")
+app = FastAPI(title="BioRefleX Pro - Local LIMS & Command Center")
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 templates_dir = os.path.join(current_dir, "templates")
@@ -26,9 +26,8 @@ def get_db():
     finally:
         db.close()
 
-# --- 1. LANDING PAGE & LOGIN ---
-@app.get("/landing", response_class=HTMLResponse)
-@app.get("/login", response_class=HTMLResponse)
+# 1. صفحة الهبوط وتسجيل الدخول (الواجهة الرئيسية عند فتح الرابط لأول مرة)
+@app.get("/", response_class=HTMLResponse)
 def landing_login_page(request: Request):
     return templates.TemplateResponse(
         request=request,
@@ -36,8 +35,8 @@ def landing_login_page(request: Request):
         context={}
     )
 
-# --- 2. RECEPTION & MANUAL PATIENT ENTRY ---
-@app.get("/", response_class=HTMLResponse)
+# 2. محطة الاستقبال وقيد المرضى
+@app.get("/reception", response_class=HTMLResponse)
 def home_reception(request: Request, db: Session = Depends(get_db)):
     recent_orders = db.query(LabOrder).order_by(LabOrder.id.desc()).limit(20).all()
     total_patients = db.query(Patient).count()
@@ -78,7 +77,7 @@ def register_patient(
     db.commit()
     return RedirectResponse(url="/lab-console", status_code=303)
 
-# --- 3. LAB CONSOLE & MANUAL TEST DATA ENTRY ---
+# 3. محطة المختبر والفرز الذكي
 @app.get("/lab-console", response_class=HTMLResponse)
 def lab_console_page(request: Request, db: Session = Depends(get_db)):
     results = db.query(ClinicalResult).order_by(ClinicalResult.id.desc()).limit(30).all()
@@ -117,7 +116,7 @@ def submit_lab_test(
     elif panel == "Thyroid":
         eval_res = MasterClinicalEngine.evaluate_thyroid(tsh=val1)
         calc_idx = eval_res["indices"].get("tsh")
-    else:  # Metabolic
+    else:
         eval_res = MasterClinicalEngine.evaluate_metabolic(glucose=val1, insulin=(val2 or 10.0))
         calc_idx = eval_res["indices"].get("homa_ir")
 
@@ -154,8 +153,9 @@ def submit_lab_test(
     db.commit()
     return RedirectResponse(url="/lab-console", status_code=303)
 
-# --- 4. BATCH FILE UPLOAD & ANALYZED EXPORT ---
+# 4. الاستيراد والتحليل بالجملة
 @app.get("/batch-upload", response_class=HTMLResponse)
+@app.get("/batch_upload", response_class=HTMLResponse)
 def batch_upload_page(request: Request):
     return templates.TemplateResponse(
         request=request,
@@ -166,27 +166,19 @@ def batch_upload_page(request: Request):
 @app.post("/export-analyzed-file")
 async def export_analyzed_file(file: UploadFile = File(...)):
     contents = await file.read()
-    if not file.filename or not file.filename.lower().endswith(".csv"):
-        return HTMLResponse("Please upload a CSV file.", status_code=400)
-
-    reader = csv.DictReader(io.StringIO(contents.decode("utf-8-sig")))
-    fieldnames = list(reader.fieldnames or [])
+    df = pd.read_csv(io.BytesIO(contents)) if file.filename.endswith(".csv") else pd.read_excel(io.BytesIO(contents))
 
     analyzed_rows = []
-    for row in reader:
-        def numeric_value(column: str, default: float) -> float:
-            value = row.get(column)
-            return float(value) if value not in (None, "") else default
-
-        hgb = numeric_value("hgb", 13.0)
-        rbc = numeric_value("rbc", 4.5)
-        mcv = numeric_value("mcv", 85.0)
-        plt = numeric_value("platelets", 250.0)
-        gender = str(row.get("gender") or "female")
+    for _, row in df.iterrows():
+        hgb = float(row.get("hgb", 13.0)) if pd.notna(row.get("hgb")) else 13.0
+        rbc = float(row.get("rbc", 4.5)) if pd.notna(row.get("rbc")) else 4.5
+        mcv = float(row.get("mcv", 85.0)) if pd.notna(row.get("mcv")) else 85.0
+        plt = float(row.get("platelets", 250.0)) if pd.notna(row.get("platelets")) else 250.0
+        gender = str(row.get("gender", "female"))
 
         eval_res = MasterClinicalEngine.evaluate_hematology(hgb=hgb, rbc=rbc, mcv=mcv, platelets=plt, gender=gender)
 
-        row_dict = dict(row)
+        row_dict = row.to_dict()
         row_dict["mentzer_index"] = eval_res["indices"].get("mentzer")
         row_dict["clinical_flag"] = eval_res["flag"]
         row_dict["reflex_order"] = eval_res["reflex"]
@@ -194,16 +186,14 @@ async def export_analyzed_file(file: UploadFile = File(...)):
         row_dict["added_value_iqd"] = eval_res["added_iqd"]
         analyzed_rows.append(row_dict)
 
+    result_df = pd.DataFrame(analyzed_rows)
     stream = io.StringIO()
-    extra_fields = ["mentzer_index", "clinical_flag", "reflex_order", "tube_alert", "added_value_iqd"]
-    writer = csv.DictWriter(stream, fieldnames=fieldnames + [name for name in extra_fields if name not in fieldnames])
-    writer.writeheader()
-    writer.writerows(analyzed_rows)
+    result_df.to_csv(stream, index=False)
     response = StreamingResponse(iter([stream.getvalue()]), media_type="text/csv")
     response.headers["Content-Disposition"] = "attachment; filename=analyzed_bioreflex_report.csv"
     return response
 
-# --- 5. PRINTABLE REPORT & WHATSAPP ---
+# 5. التقرير الطبي وواتساب
 @app.get("/report/{order_id}", response_class=HTMLResponse)
 def print_report(order_id: int, request: Request, db: Session = Depends(get_db)):
     order = db.query(LabOrder).filter(LabOrder.id == order_id).first()
