@@ -30,6 +30,11 @@ def get_db():
 # 1. صفحة تسجيل الدخول المنفصلة
 @app.get("/", response_class=HTMLResponse)
 @app.get("/login", response_class=HTMLResponse)
+# مسار صفحة رفع وتحليل الملفات
+@app.get("/batch-upload", response_class=HTMLResponse)
+@app.get("/batch_upload", response_class=HTMLResponse)
+def batch_upload_page(request: Request):
+    return templates.TemplateResponse(request=request, name="batch_upload.html", context={"active_page": "batch_upload"})
 def login_page(request: Request):
     return templates.TemplateResponse(request=request, name="login.html", context={})
 
