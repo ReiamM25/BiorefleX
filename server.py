@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from database import SessionLocal, Patient, LabOrder, ClinicalResult, UserAccount, init_db
 from clinical_engine import MasterClinicalEngine
 
-app = FastAPI(title="BioRefleX Pro - Optimized Local LIMS")
+app = FastAPI(title="BioRefleX Pro - Multi-Panel Clinical LIMS")
 init_db()
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -27,17 +27,20 @@ def get_db():
     finally:
         db.close()
 
+# 1. صفحة تسجيل الدخول المنفصلة
 @app.get("/", response_class=HTMLResponse)
-def landing_login_page(request: Request):
-    return templates.TemplateResponse(request=request, name="landing.html", context={})
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    return templates.TemplateResponse(request=request, name="login.html", context={})
 
 @app.post("/login-action")
 def login_action(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
     user = db.query(UserAccount).filter(UserAccount.username == username, UserAccount.password == password).first()
     if user:
         return RedirectResponse(url="/reception", status_code=303)
-    return RedirectResponse(url="/?error=1", status_code=303)
+    return RedirectResponse(url="/login?error=1", status_code=303)
 
+# 2. محطة الاستقبال وقيد المرضى والتحاليل المطلوبة
 @app.get("/reception", response_class=HTMLResponse)
 def home_reception(request: Request, search: str = None, db: Session = Depends(get_db)):
     query = db.query(LabOrder)
@@ -70,6 +73,7 @@ def register_patient(
         db.flush()
 
     prices = {"CBC": 10000.0, "Liver": 15000.0, "Renal": 15000.0, "Metabolic": 20000.0, "Thyroid": 15000.0}
+    selected_panels_str = ",".join(tests) if tests else "CBC"
     base_cost = sum([prices.get(t, 10000.0) for t in tests]) if tests else 10000.0
 
     order = LabOrder(
@@ -81,26 +85,53 @@ def register_patient(
         status="Pending"
     )
     db.add(order)
+    db.flush()
+
+    # إنشاء سجّل النتائج وربطه باللوحات المطلوبة
+    clinical_res = ClinicalResult(
+        order_id=order.id,
+        panel_type=selected_panels_str,
+        clinical_flag="قيد المعالجة",
+        reflex_order="لم يتم التقييم بعد",
+        tube_alert="يتطلب سحب العينة"
+    )
+    db.add(clinical_res)
     db.commit()
     return RedirectResponse(url="/lab-console", status_code=303)
 
+# 3. محطة المختبر والفرز الديناميكي بحسب تحاليل المريض
 @app.get("/lab-console", response_class=HTMLResponse)
 def lab_console_page(request: Request, db: Session = Depends(get_db)):
     results = db.query(ClinicalResult).order_by(ClinicalResult.id.desc()).limit(30).all()
     pending_orders = db.query(LabOrder).filter(LabOrder.status == "Pending").order_by(LabOrder.id.desc()).limit(15).all()
+    
+    # تحضير اللوحات المطلوبة لكل طلب معلق لتصفيتها في الواجهة
+    pending_data = []
+    for p_ord in pending_orders:
+        panels_list = p_ord.results.panel_type.split(",") if (p_ord.results and p_ord.results.panel_type) else ["CBC"]
+        pending_data.append({
+            "order": p_ord,
+            "panels": panels_list
+        })
+
     return templates.TemplateResponse(
         request=request,
         name="lab_console.html",
-        context={"results": results, "pending_orders": pending_orders, "active_page": "lab_console"}
+        context={"results": results, "pending_data": pending_data, "active_page": "lab_console"}
     )
 
 @app.post("/submit-lab-test")
 def submit_lab_test(
     order_id: int = Form(...),
-    panel: str = Form(...),
-    val1: float = Form(...),
-    val2: float = Form(None),
-    val3: float = Form(None),
+    hgb: float = Form(None),
+    rbc: float = Form(None),
+    mcv: float = Form(None),
+    ast: float = Form(None),
+    alt: float = Form(None),
+    creatinine: float = Form(None),
+    tsh: float = Form(None),
+    glucose: float = Form(None),
+    insulin: float = Form(None),
     db: Session = Depends(get_db)
 ):
     order = db.query(LabOrder).filter(LabOrder.id == order_id).first()
@@ -108,92 +139,73 @@ def submit_lab_test(
         return RedirectResponse(url="/lab-console", status_code=303)
 
     patient = order.patient
-    eval_res = {}
-
-    if panel == "CBC":
-        eval_res = MasterClinicalEngine.evaluate_hematology(hgb=val1, rbc=(val2 or 4.5), mcv=(val3 or 80.0), gender=patient.gender)
-        calc_idx = eval_res["indices"].get("mentzer")
-    elif panel == "Liver":
-        eval_res = MasterClinicalEngine.evaluate_liver(ast=val1, alt=(val2 or 30.0), age=patient.age)
-        calc_idx = eval_res["indices"].get("fib4")
-    elif panel == "Renal":
-        eval_res = MasterClinicalEngine.evaluate_renal(creatinine=val1, age=patient.age, gender=patient.gender)
-        calc_idx = eval_res["indices"].get("egfr")
-    elif panel == "Thyroid":
-        eval_res = MasterClinicalEngine.evaluate_thyroid(tsh=val1)
-        calc_idx = eval_res["indices"].get("tsh")
-    else:
-        eval_res = MasterClinicalEngine.evaluate_metabolic(glucose=val1, insulin=(val2 or 10.0))
-        calc_idx = eval_res["indices"].get("homa_ir")
-
-    order.status = "Completed"
-    order.add_on_revenue = eval_res["added_iqd"]
-    order.total_revenue = order.base_price + eval_res["added_iqd"]
-
     result = db.query(ClinicalResult).filter(ClinicalResult.order_id == order.id).first()
     if not result:
         result = ClinicalResult(order_id=order.id)
         db.add(result)
 
-    result.panel_type = panel
-    result.clinical_flag = eval_res["flag"]
-    result.reflex_order = eval_res["reflex"]
-    result.tube_alert = eval_res["tube_alert"]
-    result.added_value_iqd = eval_res["added_iqd"]
+    requested_panels = result.panel_type.split(",") if result.panel_type else ["CBC"]
+    flags, reflexes, tubes = [], [], []
+    total_added_iqd = 0.0
 
-    if panel == "CBC":
-        result.hgb, result.rbc, result.mcv = val1, val2, val3
-        result.mentzer_index = calc_idx
-    elif panel == "Liver":
-        result.ast, result.alt = val1, val2
-        result.fib4_index = calc_idx
-    elif panel == "Renal":
-        result.creatinine = val1
-        result.egfr_val = calc_idx
-    elif panel == "Thyroid":
-        result.tsh = val1
-    elif panel == "Metabolic":
-        result.glucose, result.insulin = val1, val2
-        result.homa_ir = calc_idx
+    # تقييم الفحوصات المطلوبة فقط وتحديث القيم
+    if "CBC" in requested_panels and hgb is not None:
+        eval_cbc = MasterClinicalEngine.evaluate_hematology(hgb=hgb, rbc=(rbc or 4.5), mcv=(mcv or 80.0), gender=patient.gender)
+        result.hgb, result.rbc, result.mcv = hgb, rbc, mcv
+        result.mentzer_index = eval_cbc["indices"].get("mentzer")
+        flags.append(f"CBC: {eval_cbc['flag']}")
+        reflexes.append(eval_cbc['reflex'])
+        tubes.append(eval_cbc['tube_alert'])
+        total_added_iqd += eval_cbc['added_iqd']
+
+    if "Liver" in requested_panels and ast is not None:
+        eval_liv = MasterClinicalEngine.evaluate_liver(ast=ast, alt=(alt or 30.0), age=patient.age)
+        result.ast, result.alt = ast, alt
+        result.fib4_index = eval_liv["indices"].get("fib4")
+        flags.append(f"Liver: {eval_liv['flag']}")
+        reflexes.append(eval_liv['reflex'])
+        tubes.append(eval_liv['tube_alert'])
+        total_added_iqd += eval_liv['added_iqd']
+
+    if "Renal" in requested_panels and creatinine is not None:
+        eval_ren = MasterClinicalEngine.evaluate_renal(creatinine=creatinine, age=patient.age, gender=patient.gender)
+        result.creatinine = creatinine
+        result.egfr_val = eval_ren["indices"].get("egfr")
+        flags.append(f"Renal: {eval_ren['flag']}")
+        reflexes.append(eval_ren['reflex'])
+        tubes.append(eval_ren['tube_alert'])
+        total_added_iqd += eval_ren['added_iqd']
+
+    if "Thyroid" in requested_panels and tsh is not None:
+        eval_thy = MasterClinicalEngine.evaluate_thyroid(tsh=tsh)
+        result.tsh = tsh
+        flags.append(f"Thyroid: {eval_thy['flag']}")
+        reflexes.append(eval_thy['reflex'])
+        tubes.append(eval_thy['tube_alert'])
+        total_added_iqd += eval_thy['added_iqd']
+
+    if "Metabolic" in requested_panels and glucose is not None:
+        eval_met = MasterClinicalEngine.evaluate_metabolic(glucose=glucose, insulin=(insulin or 10.0))
+        result.glucose, result.insulin = glucose, insulin
+        result.homa_ir = eval_met["indices"].get("homa_ir")
+        flags.append(f"Metabolic: {eval_met['flag']}")
+        reflexes.append(eval_met['reflex'])
+        tubes.append(eval_met['tube_alert'])
+        total_added_iqd += eval_met['added_iqd']
+
+    order.status = "Completed"
+    order.add_on_revenue = total_added_iqd
+    order.total_revenue = order.base_price + total_added_iqd
+
+    result.clinical_flag = " | ".join(flags) if flags else "مكتمل (طبيعي)"
+    result.reflex_order = " | ".join(set(reflexes)) if reflexes else "لا توجد فحوصات ارتكاسية"
+    result.tube_alert = " | ".join(set(tubes)) if tubes else "تم حفظ الأنابيب"
+    result.added_value_iqd = total_added_iqd
 
     db.commit()
     return RedirectResponse(url="/lab-console", status_code=303)
 
-@app.get("/batch-upload", response_class=HTMLResponse)
-@app.get("/batch_upload", response_class=HTMLResponse)
-def batch_upload_page(request: Request):
-    return templates.TemplateResponse(request=request, name="batch_upload.html", context={"active_page": "batch_upload"})
-
-@app.post("/export-analyzed-file")
-async def export_analyzed_file(file: UploadFile = File(...)):
-    contents = await file.read()
-    df = pd.read_csv(io.BytesIO(contents)) if file.filename.endswith(".csv") else pd.read_excel(io.BytesIO(contents))
-
-    analyzed_rows = []
-    for _, row in df.iterrows():
-        hgb = float(row.get("hgb", 13.0)) if pd.notna(row.get("hgb")) else 13.0
-        rbc = float(row.get("rbc", 4.5)) if pd.notna(row.get("rbc")) else 4.5
-        mcv = float(row.get("mcv", 85.0)) if pd.notna(row.get("mcv")) else 85.0
-        plt = float(row.get("platelets", 250.0)) if pd.notna(row.get("platelets")) else 250.0
-        gender = str(row.get("gender", "female"))
-
-        eval_res = MasterClinicalEngine.evaluate_hematology(hgb=hgb, rbc=rbc, mcv=mcv, platelets=plt, gender=gender)
-
-        row_dict = row.to_dict()
-        row_dict["mentzer_index"] = eval_res["indices"].get("mentzer")
-        row_dict["clinical_flag"] = eval_res["flag"]
-        row_dict["reflex_order"] = eval_res["reflex"]
-        row_dict["tube_alert"] = eval_res["tube_alert"]
-        row_dict["added_value_iqd"] = eval_res["added_iqd"]
-        analyzed_rows.append(row_dict)
-
-    result_df = pd.DataFrame(analyzed_rows)
-    stream = io.StringIO()
-    result_df.to_csv(stream, index=False)
-    response = StreamingResponse(iter([stream.getvalue()]), media_type="text/csv")
-    response.headers["Content-Disposition"] = "attachment; filename=analyzed_bioreflex_report.csv"
-    return response
-
+# 4. التقرير الطبي وتوليد التوضيحات للواتساب
 @app.get("/report/{order_id}", response_class=HTMLResponse)
 def print_report(order_id: int, request: Request, patient_phone: str = "", patient_full_name: str = "", db: Session = Depends(get_db)):
     order = db.query(LabOrder).filter(LabOrder.id == order_id).first()
@@ -204,18 +216,64 @@ def print_report(order_id: int, request: Request, patient_phone: str = "", patie
     res = order.results
     tests_detail = []
     
-    summary_text = f"مرحباً بك يا {patient_full_name or patient.name},\nإليك تقرير الفحوصات المخبرية من BioRefleX Pro:\n"
-    if res:
-        summary_text += f"- لوحة الفحص: {res.panel_type}\n- الحالة الإكلينيكية: {res.clinical_flag}\n- التوصية الطبية: {res.reflex_order}\n"
-        if res.panel_type == "CBC":
-            tests_detail.append({"name": "Hemoglobin (Hgb)", "val": res.hgb, "ref": "12.0 - 16.0", "unit": "g/dL", "status": res.clinical_flag})
-        elif res.panel_type == "Liver":
-            tests_detail.append({"name": "AST", "val": res.ast, "ref": "10 - 40", "unit": "U/L", "status": res.clinical_flag})
-        elif res.panel_type == "Renal":
-            tests_detail.append({"name": "Creatinine", "val": res.creatinine, "ref": "0.6 - 1.2", "unit": "mg/dL", "status": res.clinical_flag})
+    # بناء رسالة الواتساب المفصلة والشاملة
+    p_name = patient_full_name if patient_full_name else patient.name
+    msg_lines = [
+        f"🏥 *التقرير الطبي الصادر من نظام BioRefleX Pro*",
+        f"━━━━━━━━━━━━━━━━━━━━",
+        f"👤 *اسم المريض:* {p_name}",
+        f"🆔 *معرف المريض:* {patient.patient_id}",
+        f"📋 *رقم الطلب:* {order.order_code}",
+        f"🎂 *العمر / الجنس:* {patient.age} سنة | {patient.gender}",
+        f"━━━━━━━━━━━━━━━━━━━━",
+        f"🔬 *تفاصيل الفحوصات والنتائج المخبرية:*"
+    ]
 
-    encoded_message = urllib.parse.quote(summary_text)
-    wa_link = f"https://wa.me/{patient_phone}?text={encoded_message}" if patient_phone else "#"
+    if res:
+        if res.hgb is not None:
+            tests_detail.append({"name": "Hemoglobin (Hgb)", "val": res.hgb, "ref": "12.0 - 16.0 g/dL"})
+            msg_lines.append(f"• هيموغلوبين الدم (Hgb): {res.hgb} g/dL")
+        if res.rbc is not None:
+            tests_detail.append({"name": "RBC Count", "val": res.rbc, "ref": "4.0 - 5.5 M/µL"})
+            msg_lines.append(f"• كريات الدم الحمراء (RBC): {res.rbc} M/µL")
+        if res.mcv is not None:
+            tests_detail.append({"name": "MCV Index", "val": res.mcv, "ref": "80 - 100 fL"})
+            msg_lines.append(f"• الحجم الكريوي المتوسط (MCV): {res.mcv} fL")
+        if res.ast is not None:
+            tests_detail.append({"name": "AST (SGOT)", "val": res.ast, "ref": "10 - 40 U/L"})
+            msg_lines.append(f"• إنزيم الكبد AST: {res.ast} U/L")
+        if res.alt is not None:
+            tests_detail.append({"name": "ALT (SGPT)", "val": res.alt, "ref": "7 - 56 U/L"})
+            msg_lines.append(f"• إنزيم الكبد ALT: {res.alt} U/L")
+        if res.creatinine is not None:
+            tests_detail.append({"name": "Serum Creatinine", "val": res.creatinine, "ref": "0.6 - 1.2 mg/dL"})
+            msg_lines.append(f"• كيراتينين الدم: {res.creatinine} mg/dL")
+        if res.tsh is not None:
+            tests_detail.append({"name": "TSH", "val": res.tsh, "ref": "0.4 - 4.5 µIU/mL"})
+            msg_lines.append(f"• هرمون الغدة الدرقية (TSH): {res.tsh} µIU/mL")
+        if res.glucose is not None:
+            tests_detail.append({"name": "Fasting Glucose", "val": res.glucose, "ref": "70 - 99 mg/dL"})
+            msg_lines.append(f"• السكر الصائم: {res.glucose} mg/dL")
+
+        msg_lines.extend([
+            f"━━━━━━━━━━━━━━━━━━━━",
+            f"🩺 *التشخيص والفرز السريري:* {res.clinical_flag}",
+            f"💡 *التوصيات الارتكاسية (Reflex):* {res.reflex_order}",
+            f"🧪 *تنبيه أنابيب الفحص:* {res.tube_alert}",
+            f"━━━━━━━━━━━━━━━━━━━━",
+            f"نتمنى لكم دوام الصحة والعافية."
+        ])
+
+    full_whatsapp_msg = "\n".join(msg_lines)
+    encoded_message = urllib.parse.quote(full_whatsapp_msg)
+    
+    # تنظيف رقم الهاتف وإضافة رمز الدولة افتراضياً إن لم يوجد
+    clean_phone = patient_phone.strip().replace("+", "").replace(" ", "")
+    if clean_phone and not clean_phone.startswith("964"):
+        if clean_phone.startswith("07"):
+            clean_phone = "964" + clean_phone[1:]
+
+    wa_link = f"https://wa.me/{clean_phone}?text={encoded_message}" if clean_phone else "#"
 
     return templates.TemplateResponse(
         request=request,
@@ -227,7 +285,7 @@ def print_report(order_id: int, request: Request, patient_phone: str = "", patie
             "tests_detail": tests_detail, 
             "wa_link": wa_link, 
             "patient_phone": patient_phone,
-            "patient_full_name": patient_full_name or patient.name,
+            "patient_full_name": p_name,
             "active_page": "lab_console"
         }
     )
