@@ -1,146 +1,123 @@
 # clinical_engine.py
-import math
-
 class MasterClinicalEngine:
-    
     @staticmethod
-    def evaluate_hematology(hgb: float, rbc: float, mcv: float, platelets: float = 250.0, gender: str = "female") -> dict:
-        is_anemic = (gender == "female" and hgb < 12.0) or (gender == "male" and hgb < 13.0)
-        mentzer = round(mcv / rbc, 2) if rbc and rbc > 0 else 0.0
+    def evaluate_hematology(hgb, rbc=4.5, mcv=80.0, platelets=250.0, gender="female"):
+        flag = "Normal"
+        reflex = "None"
+        tube_alert = "EDTA (Lavender Tube)"
+        added_iqd = 0.0
+        mentzer = mcv / rbc if rbc > 0 else 0.0
 
-        if is_anemic and mcv < 80.0:
-            if mentzer < 13.0:
-                return {
-                    "panel": "CBC",
-                    "indices": {"mentzer": mentzer},
-                    "flag": "اشتباه ثلاسيميا صغرى (Thalassemia Minor)",
-                    "reflex": "Hb Electrophoresis (HPLC)",
-                    "tube_alert": "حفظ أنبوبة EDTA بالثلاجة (2-8°C)",
-                    "added_iqd": 35000.0
-                }
-            else:
-                return {
-                    "panel": "CBC",
-                    "indices": {"mentzer": mentzer},
-                    "flag": "اشتباه فقر دم بنقص الحديد (Iron Deficiency)",
-                    "reflex": "Serum Ferritin + Iron Profile",
-                    "tube_alert": "حفظ أنبوبة المصل في الثلاجة (2-8°C)",
-                    "added_iqd": 20000.0
-                }
+        if mcv < 80 and mentzer < 13:
+            flag = "Microcytic (Possible Thalassemia Minor)"
+            reflex = "Hemoglobin Electrophoresis (HbA2/HbF)"
+            added_iqd = 15000.0
+        elif mcv < 80 and mentzer >= 13:
+            flag = "Microcytic (Possible Iron Deficiency Anemia)"
+            reflex = "Serum Iron, Ferritin & TIBC"
+            added_iqd = 12000.0
+
         return {
-            "panel": "CBC",
-            "indices": {"mentzer": mentzer},
-            "flag": "طبيعي / دم ضمن المعدل",
-            "reflex": "لا يوجد",
-            "tube_alert": "حفظ روتيني",
-            "added_iqd": 0.0
+            "flag": flag,
+            "reflex": reflex,
+            "tube_alert": tube_alert,
+            "added_iqd": added_iqd,
+            "indices": {"mentzer": mentzer}
         }
 
     @staticmethod
-    def evaluate_liver(ast: float, alt: float, age: int, platelets: float = 250.0) -> dict:
-        fib4 = round((age * ast) / (platelets * math.sqrt(alt)), 2) if (platelets > 0 and alt > 0) else 0.0
+    def evaluate_liver(ast, alt, age=30):
+        flag = "Normal"
+        reflex = "None"
+        tube_alert = "SST (Yellow/Red Tube)"
+        added_iqd = 0.0
+        fib4 = (age * ast) / ((alt ** 0.5) * 40.0) if alt > 0 else 0.0
+
+        if fib4 > 3.25:
+            flag = "High Risk Liver Fibrosis (F4)"
+            reflex = "FibroScan & Gastroenterology Referral"
+            added_iqd = 25000.0
+        elif fib4 > 1.45:
+            flag = "Moderate Liver Fibrosis Risk"
+            reflex = "Liver Ultrasound & Repeat Panel"
+            added_iqd = 10000.0
+
+        return {
+            "flag": flag,
+            "reflex": reflex,
+            "tube_alert": tube_alert,
+            "added_iqd": added_iqd,
+            "indices": {"fib4": fib4}
+        }
+
+    @staticmethod
+    def evaluate_renal(creatinine, age=30, gender="female"):
+        flag = "Normal"
+        reflex = "None"
+        tube_alert = "SST or Heparin Tube"
+        added_iqd = 0.0
+        kappa = 0.7 if gender.lower() in ["female", "أنثى"] else 0.9
+        alpha = -0.329 if gender.lower() in ["female", "أنثى"] else -0.411
+        min_val = min(creatinine / kappa, 1.0)
+        max_val = max(creatinine / kappa, 1.0)
         
-        if alt > 55.0 or ast > 50.0:
-            if fib4 > 2.67:
-                return {
-                    "panel": "Liver",
-                    "indices": {"fib4": fib4},
-                    "flag": "اشتباه تليف كبدي متقدم (Advanced Fibrosis Risk)",
-                    "reflex": "HBsAg + HCV Ab + Viral Load",
-                    "tube_alert": "فصل المصل فوراً وتجميد عينة الاحتياط (-20°C)",
-                    "added_iqd": 40000.0
-                }
-            else:
-                return {
-                    "panel": "Liver",
-                    "indices": {"fib4": fib4},
-                    "flag": "ارتفاع أنزيمات الكبد (Elevated Transaminases)",
-                    "reflex": "Viral Hepatitis Screening (B & C)",
-                    "tube_alert": "حفظ أنبوبة المصل في الثلاجة (2-8°C)",
-                    "added_iqd": 25000.0
-                }
+        factor = 1.018 if gender.lower() in ["female", "أنثى"] else 1.0
+        egfr = 141 * (min_val ** alpha) * (max_val ** -1.209) * (0.993 ** age) * factor
+
+        if egfr < 60:
+            flag = "Reduced eGFR (CKD Stage 3+)"
+            reflex = "Urine Albumin-to-Creatinine Ratio (ACR) & Renal Ultrasound"
+            added_iqd = 18000.0
+
         return {
-            "panel": "Liver",
-            "indices": {"fib4": fib4},
-            "flag": "طبيعي / وظائف كبد مستقرة",
-            "reflex": "لا يوجد",
-            "tube_alert": "حفظ روتيني",
-            "added_iqd": 0.0
+            "flag": flag,
+            "reflex": reflex,
+            "tube_alert": tube_alert,
+            "added_iqd": added_iqd,
+            "indices": {"egfr": egfr}
         }
 
     @staticmethod
-    def evaluate_renal(creatinine: float, age: int, gender: str = "female") -> dict:
-        kappa = 0.7 if gender == "female" else 0.9
-        alpha = -0.241 if gender == "female" else -0.302
-        gender_mult = 1.012 if gender == "female" else 1.0
-        
-        cr_ratio = creatinine / kappa
-        egfr = round(142 * (min(cr_ratio, 1.0) ** alpha) * (max(cr_ratio, 1.0) ** -1.200) * (0.9938 ** age) * gender_mult, 1)
+    def evaluate_thyroid(tsh):
+        flag = "Normal"
+        reflex = "None"
+        tube_alert = "SST Tube"
+        added_iqd = 0.0
 
-        if egfr < 60.0 or creatinine > 1.3:
-            return {
-                "panel": "Renal",
-                "indices": {"egfr": egfr},
-                "flag": "قصور كلوي محتمل (Impaired Renal Function)",
-                "reflex": "Urine Albumin/Creatinine Ratio (ACR) + Urea",
-                "tube_alert": "طلب جمع عينة بول صباحية طازجة للمريض",
-                "added_iqd": 20000.0
-            }
-        return {
-            "panel": "Renal",
-            "indices": {"egfr": egfr},
-            "flag": "طبيعي / وظائف كلوية سليمة",
-            "reflex": "لا يوجد",
-            "tube_alert": "حفظ روتيني",
-            "added_iqd": 0.0
-        }
-
-    @staticmethod
-    def evaluate_thyroid(tsh: float) -> dict:
         if tsh > 4.5:
-            return {
-                "panel": "Thyroid",
-                "indices": {"tsh": tsh},
-                "flag": "قصور درقي مشتبه (Hypothyroidism Reflex)",
-                "reflex": "Free T4 (FT4) + Anti-TPO Antibodies",
-                "tube_alert": "حفظ المصل مجمد (-20°C) لإكمال قياس الهرمونات",
-                "added_iqd": 30000.0
-            }
+            flag = "Possible Hypothyroidism"
+            reflex = "Free T4 & Anti-TPO Antibodies"
+            added_iqd = 15000.0
         elif tsh < 0.4:
-            return {
-                "panel": "Thyroid",
-                "indices": {"tsh": tsh},
-                "flag": "فرط نشاط درقي مشتبه (Hyperthyroidism Reflex)",
-                "reflex": "Free T4 (FT4) + Free T3 (FT3)",
-                "tube_alert": "حفظ المصل مجمد (-20°C)",
-                "added_iqd": 30000.0
-            }
+            flag = "Possible Hyperthyroidism"
+            reflex = "Free T3, Free T4 & TSH Receptor Antibodies"
+            added_iqd = 20000.0
+
         return {
-            "panel": "Thyroid",
-            "indices": {"tsh": tsh},
-            "flag": "طبيعي / هرمون الغدة الدرقية سليم",
-            "reflex": "لا يوجد",
-            "tube_alert": "حفظ روتيني",
-            "added_iqd": 0.0
+            "flag": flag,
+            "reflex": reflex,
+            "tube_alert": tube_alert,
+            "added_iqd": added_iqd,
+            "indices": {"tsh": tsh}
         }
 
     @staticmethod
-    def evaluate_metabolic(glucose: float, insulin: float = 10.0) -> dict:
-        homa_ir = round((glucose * insulin) / 405.0, 2)
-        if glucose >= 126.0 or homa_ir > 2.5:
-            return {
-                "panel": "Metabolic",
-                "indices": {"homa_ir": homa_ir},
-                "flag": "مقاومة إنسولين واشتباه سكري (Insulin Resistance / T2D)",
-                "reflex": "HbA1c + Lipid Profile Complete",
-                "tube_alert": "حفظ أنبوبة فلوريد الصوديوم وأنبوبة المصل بالثلاجة",
-                "added_iqd": 25000.0
-            }
+    def evaluate_metabolic(glucose, insulin=10.0):
+        flag = "Normal"
+        reflex = "None"
+        tube_alert = "Sodium Fluoride / SST Tube"
+        added_iqd = 0.0
+        homa_ir = (glucose * insulin) / 405.0
+
+        if homa_ir > 2.5 or glucose > 126:
+            flag = "Insulin Resistance / Hyperglycemia Risk"
+            reflex = "HbA1c & Lipid Profile"
+            added_iqd = 15000.0
+
         return {
-            "panel": "Metabolic",
-            "indices": {"homa_ir": homa_ir},
-            "flag": "طبيعي / مؤشرات الأيض مستقرة",
-            "reflex": "لا يوجد",
-            "tube_alert": "حفظ روتيني",
-            "added_iqd": 0.0
+            "flag": flag,
+            "reflex": reflex,
+            "tube_alert": tube_alert,
+            "added_iqd": added_iqd,
+            "indices": {"homa_ir": homa_ir}
         }

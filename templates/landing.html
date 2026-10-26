@@ -2,10 +2,23 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>BioReflex Pro - تسجيل الدخول والمنصة</title>
+    <title>BioReflex Pro - تسجيل الدخول</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&display=swap" rel="stylesheet">
     <style>body { font-family: 'Tajawal', sans-serif; }</style>
+    <script>
+        window.addEventListener('DOMContentLoaded', (event) => {
+            if (localStorage.getItem("bioreflex_logged_in") === "true") {
+                window.location.href = "/reception";
+            }
+        });
+
+        function handleLogin(event) {
+            event.preventDefault();
+            localStorage.setItem("bioreflex_logged_in", "true");
+            document.getElementById("loginForm").submit();
+        }
+    </script>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen flex items-center justify-center p-6">
     <div class="max-w-md w-full bg-slate-800 p-8 rounded-3xl border border-slate-700 shadow-2xl space-y-6 text-center">
@@ -14,16 +27,16 @@
             <p class="text-xs text-slate-400 mt-1">منصة التشخيص والفرز المختبري الذكي</p>
         </div>
 
-        <form action="/reception" method="GET" class="space-y-4 text-right">
+        <form id="loginForm" action="/login-action" method="POST" onsubmit="handleLogin(event)" class="space-y-4 text-right">
             <div>
-                <label class="block text-xs font-bold text-slate-400 mb-1">اسم المستخدم / الكادر</label>
-                <input type="text" value="Lab Technician" required class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-teal-500">
+                <label class="block text-xs font-bold text-slate-400 mb-1">اسم المستخدم</label>
+                <input type="text" name="username" value="admin" required class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-teal-500">
             </div>
             <div>
                 <label class="block text-xs font-bold text-slate-400 mb-1">كلمة المرور</label>
-                <input type="password" value="••••••••" required class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-teal-500">
+                <input type="password" name="password" value="123" required class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-teal-500">
             </div>
-            <button type="submit" class="w-full py-3 bg-teal-500 text-slate-950 font-bold rounded-xl text-sm shadow hover:bg-teal-400 transition">تسجيل الدخول والدخول للمنصة</button>
+            <button type="submit" class="w-full py-3 bg-teal-500 text-slate-950 font-bold rounded-xl text-sm shadow hover:bg-teal-400 transition">تسجيل الدخول الدائم لهذا الجهاز</button>
         </form>
     </div>
 </body>

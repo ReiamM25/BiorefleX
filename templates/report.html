@@ -2,68 +2,61 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>التقرير الطبي - BioReflex Pro</title>
+    <title>التقرير الطبي - BioRefleX Pro</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&display=swap" rel="stylesheet">
     <style>body { font-family: 'Tajawal', sans-serif; }</style>
 </head>
-<body class="bg-slate-900 text-slate-100 min-h-screen p-6">
-    <div class="max-w-3xl mx-auto space-y-6 bg-slate-800 p-8 rounded-2xl border border-slate-700 shadow-xl">
-        <div class="flex justify-between items-border border-b border-slate-700 pb-4">
+<body class="bg-slate-900 text-slate-100 min-h-screen p-8">
+    <div class="max-w-2xl mx-auto bg-slate-800 p-8 rounded-3xl border border-slate-700 shadow-2xl space-y-6">
+        <div class="flex justify-between items-center border-b border-slate-700 pb-4">
             <div>
-                <h1 class="text-xl font-bold text-teal-400">مختبر BioReflex السريري التخصصي</h1>
-                <p class="text-xs text-slate-400">تقرير الفحص الطبي والفرز الذكي</p>
+                <h1 class="text-2xl font-black text-teal-400">BioRefleX Pro - تقرير المريض</h1>
+                <p class="text-xs text-slate-400">نظام إدارة المختبرات السريرية الذكي</p>
             </div>
-            <div class="text-left font-mono text-xs text-slate-400">
-                <div>رقم الوصل: {{ order.order_code }}</div>
-                <div>التاريخ: {{ order.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+            <a href="/lab-console" class="px-4 py-2 bg-slate-700 text-slate-200 text-xs font-bold rounded-xl hover:bg-slate-600">العودة لمحطة المختبر</a>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4 bg-slate-900/50 p-4 rounded-2xl border border-slate-700/50 text-sm">
+            <div><span class="text-slate-400">رقم الطلب:</span> <span class="font-bold text-teal-300">{{ order.order_code }}</span></div>
+            <div><span class="text-slate-400">معرف المريض:</span> <span class="font-bold text-teal-300">{{ patient.patient_id }}</span></div>
+            <div><span class="text-slate-400">العمر:</span> <span class="font-bold text-white">{{ patient.age }} سنة</span></div>
+            <div><span class="text-slate-400">الجنس:</span> <span class="font-bold text-white">{{ patient.gender }}</span></div>
+        </div>
+
+        <div class="space-y-3">
+            <h3 class="text-sm font-bold text-teal-400">النتائج التشخيصية والمؤشرات:</h3>
+            {% if res %}
+                <div class="bg-slate-900 p-4 rounded-2xl border border-slate-700 space-y-2 text-sm">
+                    <div><span class="text-slate-400">لوحة الفحص:</span> <span class="font-bold text-white">{{ res.panel_type }}</span></div>
+                    <div><span class="text-slate-400">العلامة الإكلينيكية:</span> <span class="font-bold text-amber-400">{{ res.clinical_flag }}</span></div>
+                    <div><span class="text-slate-400">التوصية / الفحص الارتكاسي:</span> <span class="font-bold text-teal-300">{{ res.reflex_order }}</span></div>
+                    <div><span class="text-slate-400">تنبيه الأنبوب:</span> <span class="font-bold text-rose-400">{{ res.tube_alert }}</span></div>
+                </div>
+            {% else %}
+                <p class="text-xs text-amber-400">لم يتم إدخال النتائج بعد لهذا الطلب.</p>
+            {% endif %}
+        </div>
+
+        <form method="GET" class="bg-slate-900 p-4 rounded-2xl border border-slate-700 space-y-4">
+            <h3 class="text-xs font-bold text-slate-300">إرسال التقرير عبر الواتساب للمريض:</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-[11px] text-slate-400 mb-1">اسم المريض الثلاثي</label>
+                    <input type="text" name="patient_full_name" value="{{ patient_full_name }}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-teal-500">
+                </div>
+                <div>
+                    <label class="block text-[11px] text-slate-400 mb-1">رقم الهاتف (مع رمز الدولة، مثلاً: 9647XXXXXXXX+)</label>
+                    <input type="text" name="patient_phone" value="{{ patient_phone }}" placeholder="9647..." class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-teal-500">
+                </div>
             </div>
-        </div>
+            <div class="flex gap-2">
+                <button type="submit" class="flex-1 py-2 bg-slate-700 text-white font-bold rounded-xl text-xs hover:bg-slate-600 transition">حفظ وتحديث معلومات الإرسال</button>
+                <a href="{{ wa_link }}" target="_blank" class="flex-1 py-2 bg-emerald-600 text-white font-bold rounded-xl text-xs text-center hover:bg-emerald-500 transition shadow">إرسال عبر الواتساب 📱</a>
+            </div>
+        </form>
 
-        <!-- Patient Info -->
-        <div class="grid grid-cols-3 gap-4 bg-slate-900 p-4 rounded-xl border border-slate-700 text-sm">
-            <div>اسم المراجع: <span class="font-bold text-white">{{ patient.name if patient else 'N/A' }}</span></div>
-            <div>العمر: <span class="font-bold text-white">{{ patient.age if patient else 'N/A' }} سنة</span></div>
-            <div>الجنس: <span class="font-bold text-white">{{ patient.gender if patient else 'N/A' }}</span></div>
-        </div>
-
-        <!-- Tests Table -->
-        <div class="overflow-x-auto">
-            <table class="w-full text-right text-xs">
-                <thead class="bg-slate-900 text-slate-400 border-b border-slate-700">
-                    <tr>
-                        <th class="p-3">اسم الفحص</th>
-                        <th class="p-3">النتيجة</th>
-                        <th class="p-3">المدى الطبيعي</th>
-                        <th class="p-3">الحالة السريرية</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-slate-700">
-                    {% for t in tests_detail %}
-                    <tr>
-                        <td class="p-3 font-bold">{{ t.name }}</td>
-                        <td class="p-3 font-mono text-teal-400">{{ t.val }} {{ t.unit }}</td>
-                        <td class="p-3 text-slate-400">{{ t.ref }}</td>
-                        <td class="p-3"><span class="px-2 py-1 rounded-lg font-bold {{ t.color }}">{{ t.status }}</span></td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-
-        <!-- Clinical Triage Summary -->
-        <div class="bg-slate-900 p-4 rounded-xl border border-slate-700 space-y-2 text-xs">
-            <div class="font-bold text-teal-300">التوصيات والفرز الذكي:</div>
-            <div>التقييم الأولي: <span class="text-white font-bold">{{ res.clinical_flag if res else 'طبيعي' }}</span></div>
-            <div>فحص Reflex الموصى به: <span class="text-amber-300 font-bold">{{ res.reflex_order if res else 'لا يوجد' }}</span></div>
-            <div>التعامل مع العينة: <span class="text-slate-300">{{ res.tube_alert if res else 'حفظ روتيني' }}</span></div>
-        </div>
-
-        <!-- WhatsApp Action Button -->
-        <div class="flex gap-4 pt-4">
-            <a href="{{ wa_link }}" target="_blank" class="flex-1 py-3 bg-emerald-600 text-white font-bold rounded-xl text-center text-sm shadow hover:bg-emerald-500 transition">إرسال التقرير عبر واتساب للمراجع</a>
-            <button onclick="window.print()" class="px-6 py-3 bg-slate-700 text-white font-bold rounded-xl text-sm hover:bg-slate-600">طباعة التقرير</button>
-        </div>
+        <button onclick="window.print()" class="w-full py-3 bg-teal-500 text-slate-950 font-bold rounded-xl text-sm shadow hover:bg-teal-400 transition">طباعة التقرير الرسمي 🖨️</button>
     </div>
 </body>
 </html>

@@ -5,14 +5,15 @@ import urllib.parse
 import pandas as pd
 import uvicorn
 from typing import List
-from fastapi import FastAPI, Request, Form, UploadFile, File, Depends, status
+from fastapi import FastAPI, Request, Form, UploadFile, File, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
-from database import SessionLocal, Patient, LabOrder, ClinicalResult
+from database import SessionLocal, Patient, LabOrder, ClinicalResult, UserAccount, init_db
 from clinical_engine import MasterClinicalEngine
 
-app = FastAPI(title="BioRefleX Pro - Local LIMS & Command Center")
+app = FastAPI(title="BioRefleX Pro - Optimized Local LIMS")
+init_db()
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 templates_dir = os.path.join(current_dir, "templates")
@@ -26,25 +27,31 @@ def get_db():
     finally:
         db.close()
 
-# 1. صفحة الهبوط وتسجيل الدخول (الواجهة الرئيسية عند فتح الرابط لأول مرة)
 @app.get("/", response_class=HTMLResponse)
 def landing_login_page(request: Request):
-    return templates.TemplateResponse(
-        request=request,
-        name="landing.html",
-        context={}
-    )
+    return templates.TemplateResponse(request=request, name="landing.html", context={})
 
-# 2. محطة الاستقبال وقيد المرضى
+@app.post("/login-action")
+def login_action(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+    user = db.query(UserAccount).filter(UserAccount.username == username, UserAccount.password == password).first()
+    if user:
+        return RedirectResponse(url="/reception", status_code=303)
+    return RedirectResponse(url="/?error=1", status_code=303)
+
 @app.get("/reception", response_class=HTMLResponse)
-def home_reception(request: Request, db: Session = Depends(get_db)):
-    recent_orders = db.query(LabOrder).order_by(LabOrder.id.desc()).limit(20).all()
+def home_reception(request: Request, search: str = None, db: Session = Depends(get_db)):
+    query = db.query(LabOrder)
+    if search:
+        query = query.join(Patient).filter(Patient.name.contains(search) | Patient.patient_id.contains(search))
+    
+    recent_orders = query.order_by(LabOrder.id.desc()).limit(20).all()
     total_patients = db.query(Patient).count()
     next_patient_id = f"IQ-{total_patients + 1001}"
+    
     return templates.TemplateResponse(
         request=request,
         name="reception.html",
-        context={"orders": recent_orders, "next_patient_id": next_patient_id, "active_page": "reception"}
+        context={"orders": recent_orders, "next_patient_id": next_patient_id, "active_page": "reception", "search": search or ""}
     )
 
 @app.post("/register-patient")
@@ -77,7 +84,6 @@ def register_patient(
     db.commit()
     return RedirectResponse(url="/lab-console", status_code=303)
 
-# 3. محطة المختبر والفرز الذكي
 @app.get("/lab-console", response_class=HTMLResponse)
 def lab_console_page(request: Request, db: Session = Depends(get_db)):
     results = db.query(ClinicalResult).order_by(ClinicalResult.id.desc()).limit(30).all()
@@ -153,15 +159,10 @@ def submit_lab_test(
     db.commit()
     return RedirectResponse(url="/lab-console", status_code=303)
 
-# 4. الاستيراد والتحليل بالجملة
 @app.get("/batch-upload", response_class=HTMLResponse)
 @app.get("/batch_upload", response_class=HTMLResponse)
 def batch_upload_page(request: Request):
-    return templates.TemplateResponse(
-        request=request,
-        name="batch_upload.html",
-        context={"active_page": "batch_upload"}
-    )
+    return templates.TemplateResponse(request=request, name="batch_upload.html", context={"active_page": "batch_upload"})
 
 @app.post("/export-analyzed-file")
 async def export_analyzed_file(file: UploadFile = File(...)):
@@ -193,9 +194,8 @@ async def export_analyzed_file(file: UploadFile = File(...)):
     response.headers["Content-Disposition"] = "attachment; filename=analyzed_bioreflex_report.csv"
     return response
 
-# 5. التقرير الطبي وواتساب
 @app.get("/report/{order_id}", response_class=HTMLResponse)
-def print_report(order_id: int, request: Request, db: Session = Depends(get_db)):
+def print_report(order_id: int, request: Request, patient_phone: str = "", patient_full_name: str = "", db: Session = Depends(get_db)):
     order = db.query(LabOrder).filter(LabOrder.id == order_id).first()
     if not order:
         return HTMLResponse("الطلب غير موجود", status_code=404)
@@ -203,13 +203,33 @@ def print_report(order_id: int, request: Request, db: Session = Depends(get_db))
     patient = order.patient
     res = order.results
     tests_detail = []
-    if res and res.panel_type == "CBC":
-        tests_detail.append({"name": "Hemoglobin (Hgb)", "val": res.hgb or 0.0, "ref": "12.0 - 16.0", "unit": "g/dL", "status": "اختبار", "color": "text-teal-400"})
+    
+    summary_text = f"مرحباً بك يا {patient_full_name or patient.name},\nإليك تقرير الفحوصات المخبرية من BioRefleX Pro:\n"
+    if res:
+        summary_text += f"- لوحة الفحص: {res.panel_type}\n- الحالة الإكلينيكية: {res.clinical_flag}\n- التوصية الطبية: {res.reflex_order}\n"
+        if res.panel_type == "CBC":
+            tests_detail.append({"name": "Hemoglobin (Hgb)", "val": res.hgb, "ref": "12.0 - 16.0", "unit": "g/dL", "status": res.clinical_flag})
+        elif res.panel_type == "Liver":
+            tests_detail.append({"name": "AST", "val": res.ast, "ref": "10 - 40", "unit": "U/L", "status": res.clinical_flag})
+        elif res.panel_type == "Renal":
+            tests_detail.append({"name": "Creatinine", "val": res.creatinine, "ref": "0.6 - 1.2", "unit": "mg/dL", "status": res.clinical_flag})
+
+    encoded_message = urllib.parse.quote(summary_text)
+    wa_link = f"https://wa.me/{patient_phone}?text={encoded_message}" if patient_phone else "#"
 
     return templates.TemplateResponse(
         request=request,
         name="report.html",
-        context={"order": order, "patient": patient, "res": res, "tests_detail": tests_detail, "wa_link": "#", "active_page": "lab_console"}
+        context={
+            "order": order, 
+            "patient": patient, 
+            "res": res, 
+            "tests_detail": tests_detail, 
+            "wa_link": wa_link, 
+            "patient_phone": patient_phone,
+            "patient_full_name": patient_full_name or patient.name,
+            "active_page": "lab_console"
+        }
     )
 
 if __name__ == "__main__":
